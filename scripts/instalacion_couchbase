@@ -1,0 +1,59 @@
+#!/bin/bash
+# ==============================================================================
+# Script de Instalación Automatizada de Couchbase Server para Ubuntu
+# (Versión Zero-Touch / Sin Intervenciones)
+# ==============================================================================
+
+echo "Iniciando el despliegue desatendido de Couchbase Server..."
+
+# 1. Actualización del sistema
+echo "[1/6] Actualizando el sistema operativo..."
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+# 2. Instalación de dependencias (Configuradas para no mostrar pantallas interactivas)
+echo "[2/6] Instalando dependencias necesarias (curl, gnupg, iptables-persistent)..."
+# Pre-configuramos iptables-persistent para que acepte guardar las reglas automáticamente
+echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+
+# Instalamos los paquetes de forma silenciosa
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 software-properties-common iptables-persistent
+
+# 3. Descarga e instalación de Couchbase
+echo "[3/6] Descargando e instalando el repositorio y servidor de Couchbase..."
+curl -O https://packages.couchbase.com/releases/couchbase-release/couchbase-release-1.0-amd64.deb
+sudo dpkg -i couchbase-release-1.0-amd64.deb
+sudo apt-get update -y
+sudo apt-get install -y couchbase-server
+
+# 4. Configuración básica post-instalación
+echo "[4/6] Aplicando configuraciones a nivel de sistema operativo..."
+# Reducimos el "swappiness" para mejorar el rendimiento de la base de datos en RAM
+sudo sysctl vm.swappiness=1
+echo 'vm.swappiness=1' | sudo tee -a /etc/sysctl.conf > /dev/null
+
+# 5. Apertura de puertos en el firewall
+echo "[5/6] Configurando reglas de firewall (iptables para Oracle Cloud)..."
+# Puertos externos e internos de Couchbase
+sudo iptables -I INPUT 1 -p tcp -m state --state NEW -m tcp --dport 8091:8096 -j ACCEPT
+sudo iptables -I INPUT 1 -p tcp -m state --state NEW -m tcp --dport 18091:18096 -j ACCEPT
+sudo iptables -I INPUT 1 -p tcp -m state --state NEW -m tcp --dport 11210 -j ACCEPT
+sudo iptables -I INPUT 1 -p tcp -m state --state NEW -m tcp --dport 21100 -j ACCEPT
+
+# Permitimos tráfico interno de la subred para la sincronización del clúster
+# (Ajusta la IP 10.0.0.0/24 si tu red privada de Oracle es distinta)
+sudo iptables -I INPUT 1 -s 10.0.0.0/24 -j ACCEPT
+
+# Guardamos las reglas para que persistan a los reinicios
+sudo netfilter-persistent save
+
+# 6. Inicio y habilitación del servicio
+echo "[6/6] Iniciando Couchbase y habilitando auto-arranque..."
+sudo systemctl enable couchbase-server
+sudo systemctl start couchbase-server
+
+echo "=============================================================================="
+echo "¡Despliegue completado con éxito!"
+echo "Couchbase está corriendo. Puedes acceder a http://<IP_PUBLICA>:8091"
+echo "=============================================================================="
