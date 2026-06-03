@@ -1,0 +1,17 @@
+#!/bin/bash
+# Script de limpieza automática para Couchbase Server
+3
+4
+LOG_DIR="/logs/couchbase"
+echo "Iniciando limpieza de logs en $LOG_DIR..."
+# 1. Limpiar logs operativos y lentos (> 30 días)
+find $LOG_DIR -name "query*.log*" -mtime +30 -delete
+find $LOG_DIR -name "info*.log*" -mtime +30 -delete
+# 2. Limpiar logs de errores (> 90 días)
+find $LOG_DIR -name "error*.log*" -mtime +90 -delete
+find $LOG_DIR -name "xdcr*.log*" -mtime +90 -delete
+# 3. Limpiar comprimidos viejos (> 180 días), excluyendo auditoría
+find $LOG_DIR -name "*.gz" ! -name "audit*" -mtime +180 -delete
+# 4. Limpiar logs de auditoría (> 365 días)
+find $LOG_DIR -name "audit*.log*" -mtime +365 -delete
+echo "Limpieza completada exitosamente."
