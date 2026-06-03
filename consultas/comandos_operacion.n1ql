@@ -1,0 +1,14 @@
+/* 1. Inserción de prueba (N1QL) */
+UPSERT INTO `bucket_produccion` (KEY, VALUE) 
+VALUES ("empleado:99", {"nombre": "Carlos", "puesto": "DBA", "salario": 100000});
+
+/* 2. Consulta de verificación de datos */
+SELECT meta().id, nombre, puesto 
+FROM `bucket_produccion` 
+LIMIT 10;
+
+/* 3. Destrucción de índice atascado por Timeout (Fuerza Bruta CLI) */
+/* curl -u Administrator:"PASS" -d 'statement=DROP PRIMARY INDEX ON bucket_produccion' http://localhost:8093/query/service */
+
+/* 4. Generación masiva de carga (5000 documentos sintéticos) */
+/* /opt/couchbase/bin/cbworkloadgen -n localhost:8091 -u Administrator -p "PASS" -b bucket_produccion -i 5000 -j */
