@@ -1,0 +1,83 @@
+import logging
+import requests
+from datetime import timedelta
+from couchbase.cluster import Cluster
+from couchbase.auth import PasswordAuthenticator
+from couchbase.options import ClusterOptions
+# 1. Configuración del reporte por Log
+logging.basicConfig(
+filename='index_maintenance.log',
+level=logging.INFO,
+format='%(asctime)s - %(levelname)s - %(message)s'
+)
+# 2. Credenciales y Configuración del Clúster
+CB_HOST = "couchbase://10.0.0.62" # IP Privada del Nodo 1
+CB_USER = "Administrator"
+CB_PASS = “Contraseña”
+BUCKET_NAME = "bucket_produccion"
+# Endpoint de la API REST para métricas de índices (puerto 9102)
+INDEX_STATS_URL = f"http://10.0.0.62:9102/api/v1/stats"
+def conectar_cluster():
+try:
+auth = PasswordAuthenticator(CB_USER, CB_PASS)
+options = ClusterOptions(auth)
+cluster = Cluster(CB_HOST, options)
+cluster.wait_until_ready(timedelta(seconds=10))
+return cluster
+except Exception as e:
+logging.error(f"Error de conexión al clúster: {e}")
+return None
+def obtener_fragmentacion_indices():
+"""
+Consulta la API REST de Couchbase para obtener el % de fragmentación.
+Retorna un diccionario: {'nombre_indice': porcentaje_fragmentacion}
+"""
+indices_frag = {}
+try:
+response = requests.get(INDEX_STATS_URL, auth=(CB_USER, CB_PASS))
+if response.status_code == 200:
+stats = response.json()
+for stat_name, stat_value in stats.items():
+if "frag_percent" in stat_name:
+index_name = stat_name.split(":")[1]
+indices_frag[index_name] = float(stat_value)
+except Exception as e:
+logging.error(f"Error al obtener estadísticas de fragmentación: {e}")
+return indices_frag
+def procesar_mantenimiento(cluster, indices_frag):
+for index_name, frag_percent in indices_frag.items():
+if frag_percent > 50.0:
+# Requisito: Reconstruir índices > 50%
+logging.warning(f"Índice '{index_name}' con {frag_percent}% de fragmentación. Acción: RECONSTRUIR.")
+try:
+q_drop = f"DROP INDEX `{BUCKET_NAME}`.`{index_name}`"
+cluster.query(q_drop).execute()
+2
+q_create = f"CREATE INDEX `{index_name}` ON `{BUCKET_NAME}`(id) WITH {{'defer_build': true}}"
+cluster.query(q_create).execute()
+cluster.query_indexes().build_deferred_indexes(BUCKET_NAME)
+logging.info(f"Índice '{index_name}' reconstruido exitosamente vía N1QL.")
+except Exception as e:
+logging.error(f"Fallo al reconstruir '{index_name}': {e}")
+elif 30.0 <= frag_percent <= 50.0:
+# Requisito: Reorganizar índices entre 30% y 50%
+logging.warning(f"Índice '{index_name}' con {frag_percent}% de fragmentación. Acción: REORGANIZAR (Compactar).")
+try:
+compact_url = f"http://10.0.0.62:8091/api/index/triggerCompaction"
+requests.post(compact_url, auth=(CB_USER, CB_PASS))
+logging.info(f"Se lanzó la reorganización (compactación) para los índices.")
+except Exception as e:
+logging.error(f"Fallo al reorganizar índices: {e}")
+else:
+# < 30% no requiere acción
+logging.info(f"Índice '{index_name}' saludable (Fragmentación: {frag_percent}%).")
+if __name__ == "__main__":
+logging.info("--- Iniciando ventana de mantenimiento de índices ---")
+cluster_cb = conectar_cluster()
+if cluster_cb:
+fragmentaciones = obtener_fragmentacion_indices()
+if fragmentaciones:
+procesar_mantenimiento(cluster_cb, fragmentaciones)
+else:
+logging.info("No se detectaron índices para evaluar.")
+logging.info("--- Finalizando ventana de mantenimiento ---")
